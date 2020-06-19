@@ -7,3 +7,7 @@ members = [
 
 # [profile.release]
 # debug = true
+
+
+[patch.crates-io]
+rstar = { path = "../rstar/rstar" }

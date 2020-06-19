@@ -424,6 +424,15 @@ pub trait TargetNeuron: QueryNeuron {
         tangent: &Normal3,
         alpha: Option<Precision>,
     ) -> DistDot;
+
+    fn query_like(
+        &self,
+        target: &Self,
+        use_alpha: bool,
+        score_fn: &impl Fn(&DistDot) -> Precision,
+    ) -> Precision where Self: Sized {
+        target.query(self, use_alpha, score_fn)
+    }
 }
 
 /// Target neuron using an [R*-tree](https://en.wikipedia.org/wiki/R*_tree) for spatial queries.
@@ -567,6 +576,40 @@ impl TargetNeuron for RStarTangentsAlphas {
             })
             .expect("impossible")
     }
+
+    fn query_like(
+        &self,
+        target: &Self,
+        use_alpha: bool,
+        score_fn: &impl Fn(&DistDot) -> Precision,
+    ) -> Precision where Self: Sized {
+        let mut score_total: Precision = 0.0;
+        for nn in target.rtree.all_nearest_neighbors(&self.rtree) {
+            let tangent_alpha = self.tangents_alphas[nn.query.data];
+            let alpha = if use_alpha {
+                Some(tangent_alpha.alpha)
+            } else {
+                None
+            };
+            // let dd =
+            //     target.nearest_match_dist_dot(q_pt_idx.position(), &tangent_alpha.tangent, alpha);
+
+            let ta = target.tangents_alphas[nn.target.data];
+            let raw_dot = ta.tangent.dot(&tangent_alpha.tangent).abs();
+            let dot = match alpha {
+                Some(a) => raw_dot * geometric_mean(a, ta.alpha),
+                None => raw_dot,
+            };
+            let dd = DistDot {
+                dist: nn.distance_2.sqrt(),
+                dot,
+            };
+            
+            let score = score_fn(&dd);
+            score_total += score;
+        }
+        score_total
+    }
 }
 
 // ? consider using nalgebra's Point3 in PointWithIndex, for consistency
@@ -687,13 +730,13 @@ where
         // ? consider separate methods
         let q = self.neurons_scores.get(query_idx)?;
         let t = self.neurons_scores.get(target_idx)?;
-        let mut score = q.neuron.query(&t.neuron, use_alpha, &self.score_fn);
+        let mut score = q.neuron.query_like(&t.neuron, use_alpha, &self.score_fn);
         if normalize {
             score /= q.score(use_alpha)
         }
         match symmetry {
             Some(s) => {
-                let mut score2 = t.neuron.query(&q.neuron, use_alpha, &self.score_fn);
+                let mut score2 = t.neuron.query_like(&q.neuron, use_alpha, &self.score_fn);
                 if normalize {
                     score2 /= t.score(use_alpha);
                 }
